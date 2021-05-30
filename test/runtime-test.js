@@ -40,7 +40,8 @@ describe("Runtime", () => {
       expect(Runtime.$runtime.package.info).to.be.have.property('version');
     })
 
-    // it("waits", (done) => {
+    // it("waits", function(done) {
+    //   this.timeout(3600e3)
     //   runtime.setReloadEnabled(true);
     //   setTimeout(done, 3600e3);
     // })

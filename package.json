@@ -1,7 +1,7 @@
 {
   "name": "reflecter",
-  "version": "0.5.0",
-  "description": "Reflection and hot reloading for packages and modules for node.js",
+  "version": "0.5.1",
+  "description": "Reflection and live reloading for packages and modules for node.js",
   "main": "index.js",
   "scripts": {
     "test": "mocha"
@@ -10,7 +10,18 @@
     "type": "git",
     "url": "git+https://github.com/kloshih/reflecter.git"
   },
-  "keywords": [],
+  "keywords": [
+    "node",
+    "reload",
+    "hotswap",
+    "source",
+    "code",
+    "package",
+    "module",
+    "metadata",
+    "reflection",
+    "class"
+  ],
   "author": "Lo Shih <kloshih@gmail.com>",
   "license": "Apache-2.0",
   "bugs": {

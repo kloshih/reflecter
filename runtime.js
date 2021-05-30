@@ -19,17 +19,18 @@ const fs = require('fs');
  */
 class Runtime extends EventEmitter {
 
-  constructor(config) {
+  constructor() {
     super();
-    this.config = config;
     this.packages = {};
     this.modules = {};
     this.locals = {};
     this.main = null;
     this.reloadEnabled = process.env.RELOAD_ENABLED != null;
+    this.quiet = process.env.RELOAD_ENABLED == 'quiet';
     this.pending = true;
     this.sync();
     delete(this.pending);
+    // sync() require.cache every 5 seconds, for new requires
     this.timer = setInterval(() => this.sync(), 5e3);
     this.timer.unref()
   }
@@ -80,30 +81,47 @@ class Runtime extends EventEmitter {
       // console.log(`Runtime: synced in ${time.toFixed(3)}ms`);
 
     } catch (error) {
-      console.log(error.stack)
+      if (!this.package.runtime.quiet) console.log(error.stack)
     }
   }
   
-  package(dir) {
-    let pack = this.packages[dir];
-    if (!pack) {
-      pack = this.packages[dir] = new Package(dir, this)
-      if (!dir.includes('/node_modules/')) {
-        this.locals[dir] = pack;
-        if (this.reloadEnabled)
-          pack.attach();
-      }
-      if (!this.pending)
-        this.emit('package', dir, pack);
-    }
-    return pack;
-  }
-  
-  module(file) {
-    let module = this.modules[file];
-    return module;
-  }
+  package(pkg) {
+    switch (_typeof(pkg)) {
+      case 'object':
+        const cls = mod.constructor;
+        return cls && cls.$runtime && cls.$runtime.package;
 
+      case 'class':
+        return mod.$runtime && mod.$runtime.package;
+
+      case 'string':
+        let pack = this.packages[pkg];
+        if (!pack) {
+          pack = this.packages[pkg] = new Package(pkg, this)
+          if (!pkg.includes('/node_modules/')) {
+            this.locals[pkg] = pack;
+            if (this.reloadEnabled)
+              pack.attach();
+          }
+          if (!this.pending)
+            this.emit('package', pkg, pack);
+        }
+        return pack;
+    }
+  }
+  
+  module(mod) {
+    switch (_typeof(mod)) {
+      case 'object':
+        const cls = mod.constructor;
+        return cls && cls.$runtime && cls.$runtime.module;
+      case 'class':
+        return mod.$runtime && mod.$runtime.module;
+      case 'string':
+        let module = this.modules[mod];
+        return module;
+    }
+  }
 
   get isReloadEnabled() {
     return this.reloadEnabled;
@@ -184,10 +202,10 @@ class Package {
       self.fileChanged(e, f, this)
     });
     this.watcher.on('close', () => {
-      console.log("fileChanged: closed");
+      if (!this.runtime.quiet) console.log("fileChanged: closed");
     })
     this.watcher.on('error', (error) => {
-      console.log("fileChanged: error", error);
+      if (!this.runtime.quiet) console.log("fileChanged: error", error);
     })
     if (!this.runtime.pending)
       this.runtime.emit('watching', this.dir, this);
@@ -217,10 +235,10 @@ class Package {
             module.renamed = true;
           break;
         default:
-          console.log("Unsupported change type");
+          if (!this.runtime.quiet) console.log("Unsupported change type");
       }
     } catch (error) {
-      console.log("Runtime: IMPL error: ", error.stack);
+      if (!this.runtime.quiet) console.log("Runtime: IMPL error: ", error.stack);
     }
   }
 
@@ -260,7 +278,7 @@ class Module {
 
     /* Don't reload files that have no types defined. */
     if (Object.keys(this.types).length == 0) {
-      console.log(`Runtime: package '${this.package.name}' not reloading, no types in module '${this.file}'`);
+      if (!this.package.runtime.quiet) console.log(`Reflecter: package '${this.package.name}' not reloading, no types in module '${this.file}'`);
       return;
     }
     // console.log(`  - ${this.stat.mtimeMs - oldStat.mtimeMs}ms ago`);
@@ -328,7 +346,7 @@ class Module {
     const entries = Object.entries(this.types);
     if (entries.length > 0) {
       this.version++;
-      console.log(`Runtime: package '${this.package.name}' reloaded module '${this.file}' (${entries.map(([k,t]) => this.types[''].name+(k?'.'+k:'')+/*' "'+t.name+'"*/'@'+t.$runtime.version+'').join(', ')})`);
+      if (!this.package.runtime.quiet) console.log(`Runtime: package '${this.package.name}' reloaded module '${this.file}' (${entries.map(([k,t]) => this.types[''].name+(k?'.'+k:'')+/*' "'+t.name+'"*/'@'+t.$runtime.version+'').join(', ')})`);
       if (!this.package.runtime.pending) 
         this.package.runtime.emit('reloaded', this.file, this);
     }
@@ -347,8 +365,6 @@ class Module {
       const symbolType = _typeof(symbol);
       switch (symbolType) {
         case 'class':
-          // if (!symbol.name.match(/^[A-Z]/) && _typeof(parent) !== 'object')
-          //   break;
           types[kp] = symbol;
           // fall through
         case 'object':
