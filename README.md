@@ -211,7 +211,7 @@ Represents a package or any local directory with a `package.json`.
 
 ### Properties
 
-- ****name** (string)
+- **name** (string)
 
   The basename of the package, such as `"reflecter"`.
 
