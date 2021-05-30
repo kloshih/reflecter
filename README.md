@@ -282,7 +282,7 @@ Represents a loaded source file
 - **types** (Object<string,function|class>)
 
   A flatten list of reloadable exported symbols in the module. This is
-  the list of symbols defined by the. 
+  the list of symbols defined by the runtime. 
 
 ### Methods
 
