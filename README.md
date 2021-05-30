@@ -140,6 +140,28 @@ runtime.packages; // all loaded packages
 
   Whether the source reloader is enabled
 
+### Methods
+
+- **package**(*abspath*)  
+  **package**(*class*)  
+  **package**(*object*)
+  - *path* (string) – the directory for the package
+    *class* (class) – A class, or  
+    *object* (object) – An instance of a class
+  - *returns ([Package](#Package))*
+
+  This overloaded method returns the [Package](#Package) for the directory or the packagke that defines the class or object's constructor. 
+
+- **module**(*abspath*)  
+  **module**(*class*)  
+  **module**(*object*)
+  - *path* (string) – the directory for the module
+    *class* (class) – A class, or  
+    *object* (object) – An instance of a class
+  - *returns ([Module](#Module))*
+
+  Returns the [Module](#Module) for the file, class or object. 
+
 ### Events
 
 - **reloaded**(*path*, *module*)
@@ -218,7 +240,6 @@ Represents a package or any local directory with a `package.json`.
 
 ```js
 // ./my-class.js
-
 class MyClass {
 
   // Get the version from package.json
@@ -229,7 +250,7 @@ class MyClass {
 
 }
 
-// 
+// Get information about a class
 const runtime = require('reflector');
 const module = runtime.module(MyClass);
 module.file; // file name of the class
