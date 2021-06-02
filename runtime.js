@@ -35,7 +35,7 @@ class Runtime extends EventEmitter {
     this.timer.unref()
   }
 
-  async sync() {
+  sync() {
     try {
       /* Loop through the cache */
       // let time = process.hrtime();
@@ -81,7 +81,7 @@ class Runtime extends EventEmitter {
       // console.log(`Runtime: synced in ${time.toFixed(3)}ms`);
 
     } catch (error) {
-      if (!this.package.runtime.quiet) console.log(error.stack)
+      if (!this.quiet) console.log(error.stack)
     }
   }
   
@@ -95,8 +95,19 @@ class Runtime extends EventEmitter {
         return mod.$runtime && mod.$runtime.package;
 
       case 'string':
-        let pack = this.packages[pkg];
+        let pack;
+        for (let dir = pkg, last; dir != last ; dir = path.dirname(dir)) {
+          if (pack = this.packages[dir]) {
+            break;
+          } else if (fs.existsSync(path.join(dir, 'package.json'))) {
+            pkg = dir;
+            break;
+          }
+          last = dir;
+        }
+
         if (!pack) {
+          /* Search for the package.json */
           pack = this.packages[pkg] = new Package(pkg, this)
           if (!pkg.includes('/node_modules/')) {
             this.locals[pkg] = pack;
@@ -159,6 +170,8 @@ class Package {
     const infopath = path.join(this.dir, 'package.json');
     try {
       this.info = require(infopath);
+      this.name = this.info.name;
+      this.version = this.info.version;
     } catch (error) {
       // console.log("Failed to require: " + infopath);
     }
@@ -189,6 +202,13 @@ class Package {
         this.runtime.emit('module', file, module);
     }
     return module;
+  }
+
+  providers(name) {
+    if (!this.info) return {};
+    const types = this.info.providers;
+    if (!types) return {};
+    return types[name] || {};
   }
 
   attach() {
@@ -372,9 +392,9 @@ class Module {
           for (let i = 0, ic = keys.length, key; key = keys[i]; i++) {
           // for (let key in symbol) {
             const s = symbol[key], subtype = _typeof(s);
-            if (symbolType == 'class' && !_namedLikeClass(s.name || key))
-              continue;
             if (subtype !== 'class')
+              continue;
+            if (symbolType == 'class' && !_namedLikeClass(s.name || key))
               continue;
             // if (/*subtype == 'object' ||*/ subtype == 'class')
             queue.push([kp ? kp+'.'+key : key, s, symbol])

@@ -63,7 +63,7 @@ const runtime = require('reflecter');
 
 runtime.isReloadEnabled           // -> true if RELOAD_ENABLED env variable set
 runtime.setReloadEnabled(false);  // Halts source loading
-runtime.setReloadEnabled(true);  // (Re)starts source loading
+runtime.setReloadEnabled(true);   // (Re)starts source loading
 ```
 
 - No need to restart server to reload source
@@ -142,9 +142,9 @@ runtime.packages; // all loaded packages
 
 ### Methods
 
-- **package**(*abspath*)  
-  **package**(*class*)  
-  **package**(*object*)
+- *runtime*.**package**(*abspath*)  
+  *runtime*.**package**(*class*)  
+  *runtime*.**package**(*object*)
   - *path* (string) – the directory for the package
     *class* (class) – A class, or  
     *object* (object) – An instance of a class
@@ -152,9 +152,9 @@ runtime.packages; // all loaded packages
 
   This overloaded method returns the [Package](#Package) for the directory or the packagke that defines the class or object's constructor. 
 
-- **module**(*abspath*)  
-  **module**(*class*)  
-  **module**(*object*)
+- *runtime*.**module**(*abspath*)  
+  *runtime*.**module**(*class*)  
+  *runtime*.**module**(*object*)
   - *path* (string) – the directory for the module
     *class* (class) – A class, or  
     *object* (object) – An instance of a class
@@ -286,7 +286,7 @@ Represents a loaded source file
 
 ### Methods
 
-- **reload()** 
+- *module*.**reload()** 
 
   Reloads the module programmically. If the file has not changed since
   the last reload, this method does nothing.
