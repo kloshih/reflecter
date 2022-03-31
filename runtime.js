@@ -428,3 +428,4 @@ function _typeof(value) {
 function _namedLikeClass(name) {
   return name && name.match(/^[A-Z]/)
 }
+
