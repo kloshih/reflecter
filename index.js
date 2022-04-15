@@ -13,4 +13,7 @@ const kRuntime = Symbol('kRuntime');
 const runtime = global[kRuntime] || (global[kRuntime] = new Runtime());
 
 runtime.Runtime = Runtime;
-module.exports = runtime;
+module.exports = { 
+  default: runtime,
+  runtime,
+}

@@ -1,6 +1,6 @@
 {
   "name": "reflecter",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "Reflection and live reloading for packages and modules for node.js",
   "main": "index.js",
   "scripts": {

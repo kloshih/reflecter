@@ -7,6 +7,7 @@
 const EventEmitter = require('events');
 const path = require('path');
 const fs = require('fs');
+const Module_ = require('module')
 
 /**
  * The Runtime class provides the following features:
@@ -61,7 +62,7 @@ class Runtime extends EventEmitter {
                 continue;
               parent = this.package(c);
             }
-            this.modules[file] = parent.module(module);
+            this.modules[file] = parent.module({ file, exports:module.exports })
             break;
           }
         }
@@ -190,14 +191,14 @@ class Package {
     return dependency;
   }
 
-  module(mod) {
-    const file = mod.filename;
+  module({ file, exports }) {
     if (!file.startsWith(this.dir))
       throw new Error("IMPL")
     let subfile = file.substring(this.dir.length + 1);
     let module = this.modules[subfile];
     if (!module) {
-      module = this.modules[subfile] = new Module(mod, this);
+      module = this.modules[subfile] = new Module({ file, exports }, this);
+      this.runtime.modules[file] = module;
       if (!this.runtime.pending)
         this.runtime.emit('module', file, module);
     }
@@ -214,7 +215,7 @@ class Package {
   attach() {
     if (this.watcher)
       throw new Error("IMPL: already attached")
-    // console.log("Runtime attach: watching: " + this.dir);
+    console.log("Runtime attach: watching: " + this.dir);
     const self = this;
     this.watcher = fs.watch(this.dir, { recursive:true, persistent:false, encoding:'utf8' }, function(e, f) {
       if (self.watcher !== this)
@@ -240,15 +241,35 @@ class Package {
     }
   }
 
-  fileChanged(event, filename) {
+  async fileChanged(event, filename) {
     try {
       // console.log(new Date().toISOString() + ": fileChanged: event=" + event + ", file=" + filename);
       const file = path.join(this.dir, filename);
+      const extname = path.extname(file);
       let module = this.runtime.module(file);
+
+      if (!module && moduleExts.includes(extname)) {
+        /* If we don't already have this module when file changed, either:
+         * 1. It hasn't been sync()'d yet (unlikely)
+         * 2. It is not a module and isn't in require.cache (commonjs)
+         * 3. It is an ES module and isn't in require.cache. 
+         * To check whether it is an ES module, import the file (cached). If
+         * it has a module definition, then 
+         */
+        try {
+          const exports = await import(file);
+          console.log(`reflecter:Module.fileChanged(): found exports`, exports)
+          module = this.module({ file, exports })
+          module.stat = null;
+        } catch (err) {
+          debugger;
+          console.log(`reflecter:Module.fileChanged(): failed to import '${file}': ${err.stack}`)
+        }
+      }
       switch (event) {
         case 'change':
           if (module)
-            module.reload();
+            await module.reload();
           break;
         case 'rename': // or delete
           if (module)
@@ -270,13 +291,19 @@ Runtime.Package = Package;
  */
 class Module {
 
-  constructor(module, pack) {
-    this.file = module.filename;
-    this.stat = fs.statSync(this.file);
-    this.module = module;
+  /**
+   * 
+   * @param {{file: string, exports: any}} module The 
+   * @param {*} pack 
+   */
+  constructor({ file, exports }, pack) {
     this.package = pack;
+    this.file = file;
+    this.exports = exports;
+    this.type = require.cache[this.file] ? 'commonjs' : 'module';
+    this.stat = fs.statSync(this.file);
     this.version = 0;
-    this.types = Module.exportedTypes(module.exports);
+    this.types = Module.exportedTypes(exports);
     for (let key in this.types) {
       Object.defineProperty(this.types[key], '$runtime', { value:{module:this, package:this.package, version:0}, enumerable:false, writable:false, configurable:true });
     }
@@ -287,12 +314,12 @@ class Module {
    * Reloads this module and redefines symbols as needed, writing previous 
    * definitions based on
    */
-  reload() {
+  async reload() {
     /* To prevent from double-loading, check to see if mtime is too 
      * short */
     const oldStat = this.stat;
     this.stat = fs.statSync(this.file);
-    const age = this.stat.mtimeMs - oldStat.mtimeMs;
+    const age = this.stat.mtimeMs - (oldStat ? oldStat.mtimeMs : 0);
     if (age == 0)
       return;
 
@@ -307,10 +334,49 @@ class Module {
     this.generations.push(this.types);
 
     /* Reload the module and capture the new types */
-    delete(require.cache[this.file]);
-    const exports = require(this.file);
-    this.module = require.cache[this.file];
-    const newTypes = this.types = Module.exportedTypes(exports);
+    // retry: for (let ttl = 3; ttl >= 0; ttl--) {
+      try {
+        switch (this.type) {
+          case 'commonjs':
+            delete(require.cache[this.file]);
+            this.exports = await import(this.file)
+            this.module = require.cache[this.file]
+            break;
+          case 'module':
+            const id = this.stat.mtimeMs;
+            this.exports = await import(this.file + `?${id}`)
+            break;
+        }
+      } catch (err) {
+        switch (err.code) {
+          case 'ERR_UNKNOWN_FILE_EXTENSION':
+            this.exports = this.recompile();
+            break;
+            // if (path.extname(this.file) == '.ts') {
+            //   try {
+            //     /* Ensure that ts-node/register is here to compile .ts */
+            //     this.require || (this.require = createRequire(this.file));
+            //     const tsnode = this.require('ts-node');
+            //     tsnode.register();
+            //     break;
+            //   } catch (err) {
+            //     console.log(`Reflecter: failed to load file with Typescript: ${this.file}: ${err.stack}`)
+            //     break retry;
+            //   }
+            // }
+            /* fall through */
+          default:
+            console.log(`Reflecter: failed to load file: ${this.file}: ${err.stack}`)
+            return;
+            // break retry;
+        }
+      }
+    // }
+// delete(require.cache[this.file]);
+    // const exports = await import(this.file);
+    // this.module = require.cache[this.file];
+    const newTypes = this.types = Module.exportedTypes(this.exports);
+
     for (let key in this.types) {
       Object.defineProperty(this.types[key], '$runtime', { value:{module:this, package:this.package, version:0}, enumerable:false, writable:false, configurable:true });
     }
@@ -366,9 +432,44 @@ class Module {
     const entries = Object.entries(this.types);
     if (entries.length > 0) {
       this.version++;
-      if (!this.package.runtime.quiet) console.log(`Runtime: package '${this.package.name}' reloaded module '${this.file}' (${entries.map(([k,t]) => this.types[''].name+(k?'.'+k:'')+/*' "'+t.name+'"*/'@'+t.$runtime.version+'').join(', ')})`);
+      // [['default', Runtime], ['default.Package', Package], ['default.Module', Module]]
+      // Runtime@1, { Package@1, Module@1} 
+      if (!this.package.runtime.quiet) {
+        const defs = entries.map(([key, def]) => {
+          let name = key.replace(/^default\.?/, ''), impl = def.name ?? '?';
+          return (!name ? impl : name == impl ? impl : name+':'+impl) + '@' + def.$runtime.version
+        }).join(', ')
+        console.log(`Runtime: package '${this.package.name}' reloaded module '${this.file}' (${defs})`);
+      }
       if (!this.package.runtime.pending) 
         this.package.runtime.emit('reloaded', this.file, this);
+    }
+  }
+
+  /**
+   * Compiles the module.  
+   * @return {any} The exports from the compiled file
+   */
+  recompile() {
+    const extname = path.extname(this.file)
+    switch (extname) {
+      case '.ts':
+        if (this.compiler == null) {
+          this.require || (this.require = Module_.createRequire(this.file))
+          this.tsnode = this.require('ts-node')
+          this.compiler = this.tsnode.create({})
+        }
+        const tsCode = fs.readFileSync(this.file, 'utf8')
+        const jsCode = this.compiler.compile(tsCode, this.file)
+        const paths = Module_._nodeModulePaths(path.dirname(this.file));
+        const mod = new Module_(this.file, module.parent /* ours */)
+        mod.filename = this.file;
+        mod.paths = paths;
+        mod._compile(jsCode, this.file);
+        return mod.exports;
+        
+      default:
+        throw new Error(`Reflecter: recompiling ${extname} files not supported: ${this.file}`)
     }
   }
 
@@ -409,6 +510,7 @@ class Module {
 Runtime.Module = Module;
 
 const reserved = ['constructor', 'prototype', 'length', 'arguments'];
+const moduleExts = ['.js', '.mjs']
 
 function _typeof(value) {
   if (value === undefined) return 'undefined';
