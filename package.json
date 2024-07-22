@@ -27,7 +27,8 @@
     "build": "pnpm run build:types",
     "build:docs": "jsdoc -c jsdoc.json",
     "build:types": "tsc -b tsconfig.types.json",
-    "build:types:watch": "tsc -b tsconfig.typings.json -w"
+    "build:types:watch": "tsc -b tsconfig.typings.json -w",
+    "postversion": "git push && git push --tags && pnpm publish"
   },
   "repository": {
     "type": "git",

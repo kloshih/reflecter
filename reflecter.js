@@ -585,7 +585,6 @@ class Package {
           module = this.module({ file, exports })
           module.stats = null;
         } catch (err) {
-          debugger;
           console.log(`[reflecter] Module.fileChanged(): failed to import '${file}': ${err.stack}`)
         }
       }
