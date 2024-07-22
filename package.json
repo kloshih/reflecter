@@ -2,14 +2,6 @@
   "name": "reflecter",
   "version": "0.6.0",
   "description": "Reflection and live reloading for packages and modules for node.js",
-  "main": "index.js",
-  "scripts": {
-    "test": "mocha"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/kloshih/reflecter.git"
-  },
   "keywords": [
     "node",
     "reload",
@@ -24,12 +16,36 @@
   ],
   "author": "Lo Shih <kloshih@gmail.com>",
   "license": "Apache-2.0",
+  "main": "./index.js",
+  "typings": "./types/index.d.ts",
+  "scripts": {
+    "test": "mocha",
+    "test:all": "mocha '{src,test}/**/*.{spec,test}.js'",
+    "test:watch": "mocha --parallel --watch 'test/!(*.e2e).test.js'",
+    "test:watch:all": "mocha --parallel --watch",
+    "test:coverage": "c8 mocha",
+    "build": "pnpm run build:types",
+    "build:docs": "jsdoc -c jsdoc.json",
+    "build:types": "tsc -b tsconfig.types.json",
+    "build:types:watch": "tsc -b tsconfig.typings.json -w"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kloshih/reflecter.git"
+  },
   "bugs": {
     "url": "https://github.com/kloshih/reflecter/issues"
   },
   "homepage": "https://github.com/kloshih/reflecter#readme",
   "devDependencies": {
+    "@types/node": "^18.7.8",
     "chai": "^4.3.4",
+    "jsdoc-to-markdown": "^7.1.1",
+    "jsdoc-typeof-plugin": "^1.0.0",
     "mocha": "^8.4.0"
+  },
+  "dependencies": {
+    "ts-node": "^10.9.1",
+    "typescript": "^5.1.3"
   }
 }

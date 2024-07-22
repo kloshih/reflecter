@@ -1,0 +1,995 @@
+/*
+ * reflecter.js
+ * 
+ * Copyright (c) 2021-present Lo Shih
+ */
+
+// @ts-check
+
+const EventEmitter = require('events');
+const path = require('path');
+const fs = require('fs');
+const module_ = require('module')
+const { analyzeCode } = require('./src/analyzer');
+/**
+ * The common symbol for the reflecter associated with a package, module or 
+ * constructor. 
+ * 
+ * - For contructors: `const reflecter: Reflecter = myConstructor[symReflecter]`
+ * - For packages: `import Reflecter `
+ */
+const symReflect = Symbol.for('reflect')
+
+const kSingleton = Symbol('kSingleton')
+
+const {
+  REFLECTER_RELOAD_ENABLED,
+  REFLECTER_QUIET,
+  REFLECTER_PACKAGES,
+  REFLECTER_POLL_INTERVAL = '5000', 
+  REFLECTER_IGNORE_PACKAGES = 'js-debug,reflecter',
+  REFLECTER_IGNORE_MODULES = '/(node_modules|bin|dist|build|out|tmp|cache|logs|data|docs)/|\.d\.ts'
+} = process.env
+
+const builtin_re = /^(?:(?<group>\w):)?(?<name>\w+)(?<path>.*)?$/
+
+/**
+ * @typedef {object} TypeReflect
+ * Reflect metadata for a type
+ * @prop {Module} module The module, including related
+ * @prop {Package} package The containing package
+ * @prop {number} version The 0-based version number of runtime changes
+ */
+
+
+/**
+ * The Reflecter class provides the following features:
+ * 
+ * - All required packages and modules are tracked
+ * - Watches local packages for changes
+ * - Automatically reloads type classes on file changes 
+ * - Annotates type classes with package and versions
+ *     Class[symReflect] == { module:Module, package:Package, version:0 }
+ */
+class Reflecter extends EventEmitter {
+
+  /*
+   * @typedef {{new (...args:any[]): any}} Class
+   * Class or constructor definition
+   */
+  /**
+   * @typedef {function(new: any)} Class
+   * Class or constructor definition
+   */
+
+  /**
+   * @typedef {object} ReflectClassProps
+   * @prop {TypeReflect} reflect reflect information for a type
+   */
+
+
+  /**
+   * Creates a reflecter. There can be only one reflecter at a time
+   */
+  constructor() {
+    super();
+
+    /* Enforce the singleton contract */
+    if (Reflecter[kSingleton])
+      throw new Error(`Cannot create more than one Reflecter`)
+    Reflecter[kSingleton] = this
+
+    /** @private
+     *  @type {Record<string,Package>} */
+    this.packages = {};
+    /** @type {string[]} */
+    this.ignoredPackages = REFLECTER_IGNORE_PACKAGES.trim().split(/\s*,\s*/);
+    /** @type {RegExp=} */
+    this.ignoredModules = new RegExp(REFLECTER_IGNORE_MODULES);
+    /** @package
+     *  @type {Record<string,Module>} */
+    this.modules = {};
+    /** @private
+     *  @type {Record<string,Package>} */
+    this.locals = {};
+    /** @private
+     *  @type {Module?} */
+    this.main = null;
+    /** @private
+     *  @type {boolean} */
+    this.reloadEnabled = REFLECTER_RELOAD_ENABLED != null;
+    /** @package
+     *  @type {boolean} */
+    this.quiet = REFLECTER_QUIET == 'quiet';
+    /** @package
+     *  @type {boolean=} */
+    this.pending = true;
+
+    /* Synchronize */
+    this.sync();
+
+    delete(this.pending);
+
+    // sync() require.cache every 5 seconds, for new requires
+    const pollInterval = parseInt(REFLECTER_POLL_INTERVAL ?? '5000')
+    /** @private
+     *  @type {NodeJS.Timer} */
+    this.timer = setInterval(() => this.sync(), pollInterval);
+    this.timer.unref()
+
+    /* Check if REFLECTER_PACKAGES is defined */
+    REFLECTER_PACKAGES?.split(':')?.forEach(dir => {
+      try {
+        this.package(dir)
+      } catch (err) {
+        console.log(`reflecter: while loading REFLECTER_PACKAGES, no package found: ${dir}`)
+      }
+    })
+  }
+
+  /**
+   * A cover method for analyzeCode()
+   */
+  analyzeCode = analyzeCode
+  // (code, file, opts) {
+  //   return analyzeCode(code, file, opts)
+  // }
+
+  /**
+   * Synchronzies packages
+   * @return {void}
+   */
+  sync() {
+    try {
+      /* Loop through the cache */
+      // let time = process.hrtime();
+      let added;
+      const cache = require.cache;
+      for (let file in cache) {
+        if (file in this.modules)
+          continue;
+        let module = cache[file]
+        /** @type {RegExpMatchArray?} */
+        let match;
+        if (match = file.match(builtin_re)) {
+          continue
+        } else if (match = file.match(/^((\/.*?)\/node_modules\/[^\/]+)\/(.*)$/)) {
+          /* If this is inside a to p/node_modules dir, then register both */
+          let parent = this.package(match[2]);
+          if (parent == null)
+            throw new Error(`parent required`)
+          let child = this.package(match[1]);
+          if (child == null)
+            throw new Error(`child required`)
+          parent.dependency(child);
+          if (!match[3].includes('/node_modules/')) {
+            if (module == null)
+              throw new Error(`module required`)
+            this.modules[file] = child.module({ file:module.filename, exports:module.exports });
+            // this.modules[file] = child.module(module);
+          }
+        } else {
+          /* Otherwise, there's no node_modules, so this is a local pkg */
+          for (let c = path.dirname(file); c != '/'; c = path.dirname(c)) {
+            /** @type {Package=} */
+            let parent = this.packages[c];
+            if (!parent) {
+              if (!fs.existsSync(path.join(c, 'package.json')))
+                continue;
+              parent = this.package(c);
+            }
+            if (parent == null)
+              throw new Error(`parent required (file="${file}")`)
+            if (module == null)
+              throw new Error(`module required (file="${file}")`)
+            // console.log(`[reflecter] sync: module file=${file} parent=${parent.name}`)
+            this.modules[file] = parent.module({ file, exports:module.exports })
+            break;
+          }
+        }
+        /* Track for emit */
+        if (this.modules[file]) 
+          (added || (added = [])).push(this.modules[file]);
+      }
+      /* Resolve the main module */
+      if (!this.main && require.main) {
+        this.main = this.module(require.main.filename);
+      }
+
+      if (added)
+        if (!this.pending) this.emit('updated', added);
+      // time = process.hrtime(time);
+      // time = time[0]*1e3 + time[1]/1e6;
+      // console.log(`Reflecter: synced in ${time.toFixed(3)}ms`);
+
+    } catch (error) {
+      if (!this.quiet) console.log(error.stack)
+    }
+  }
+
+  // TODO: return only one module. If the type 
+  /**
+   * Finds the module defining the given *type* in any loaded package. This 
+   * does an exhaustive search for possible files.
+   * @param {any} type
+   * @returns {Promise<Module[]>} The module for the type
+   */
+  async findModulesForType(type) {
+    const found = [];
+    // /* First check if the type is already loaded */
+    // for (const module of Object.values(this.modules)) {
+    //   const types = module.types
+    //   for (const name in types) {
+    //     if (types[name] === type) 
+    //       modules.push(module);
+    //   }
+    // }
+
+    /* Otherwise, search for the type in each of the packages */
+    for (const pack of Object.values(this.packages)) {
+      if (pack.ignored)
+        continue;
+      const modules = await pack.findModulesForType(type)
+      if (modules)
+        found.push(...modules)
+    }
+
+    return found
+  }
+  
+  /**
+   * Returns the package for the given *path* 
+   * @param  {string|Class} val The package path
+   * @return {Package|undefined} The matched package
+   */
+  package(val) {
+    switch (_typeof(val)) {
+      case 'object':
+        const cls = val.constructor;
+        return cls?.[symReflect]?.package
+
+      case 'class':
+        return val?.[symReflect]?.package;
+
+      case 'string':
+        if (typeof(val) != 'string')
+          throw new Error(`val is not a 'string'`)
+
+        /* If this is an import.meta.url, replace with what should be the 
+         * file's directory, similar to __dirname */
+        if (val.startsWith('file:'))
+          val = val.replace(/^file:(?:\/\/)?(\/.*?)(?:\/[^\/]+\.(?:js|mjs|cjs|ts))?$/, '$1')
+
+        // console.log(`[reflecter] val=${val}`)
+        if (!path.isAbsolute(val) && !val.match(/^\.(?:\/.*)?/))
+          throw new Error(`val must be an absolute path: "${val}"`)
+        if (!path.isAbsolute(val))
+          break
+
+        let pack;
+        for (let dir = val, last; dir != last ; dir = path.dirname(dir)) {
+          if (pack = this.packages[dir]) {
+            break;
+          } else if (fs.existsSync(path.join(dir, 'package.json'))) {
+            val = dir;
+            break;
+          }
+          last = dir;
+        }
+
+        if (!pack) {
+          /* Search for the package.json */
+          pack = this.packages[val] = new Package(val, this)
+          if (!val.includes('/node_modules/')) {
+            this.locals[val] = pack;
+            if (this.reloadEnabled)
+              pack.attach();
+          }
+          if (!this.pending)
+            this.emit('package', val, pack);
+        }
+        return pack;
+
+      default:
+        throw new Error(`[reflecter] IMPL: can't determine module for: ${val}`)
+    }
+  }
+  
+  /**
+   * Returns the module for the given *val* 
+   * @param  {any} val 
+   * @return {Module?}
+   */
+  module(val) {
+    switch (_typeof(val)) {
+
+      case 'object':
+        const cls = val.constructor;
+        return cls && cls[symReflect] && cls[symReflect].module;
+
+      case 'class':
+        return val[symReflect] && val[symReflect].module;
+
+      case 'string': {
+        let module = this.modules[val];
+        if (module == null) {
+          const pack = this.package(val);
+          if (pack == null)
+            throw new Error(`No package found for file: ${val}`)
+          module = pack.module({ file:val });
+        }
+        return module;
+      }
+
+      default:
+        throw new Error(`[reflecter] IMPL: no module for: ${val}`)
+    }
+  }
+
+  /**
+   * Returns `true` if reloading modules is enabled
+   */
+  get isReloadEnabled() {
+    return this.reloadEnabled;
+  }
+
+  /**
+   * Sets whether the reflecter will reload. See also {@link 
+   * Reflecter#isReloadEnabled isReloadEnabled} 
+   * @param  {boolean} enabled `true` to enable reloading
+   * @see    Reflecter#isReloadEnabled 
+   * @since  1.0
+   */
+  setReloadEnabled(enabled) {
+    if (this.reloadEnabled != enabled) {
+      this.reloadEnabled = enabled;
+      if (this.reloadEnabled) {
+        for (const pack of Object.values(this.locals))
+          pack.attach();
+      } else {
+        for (const pack of Object.values(this.locals))
+          pack.detach();
+      }
+    }
+  }
+  
+}
+
+
+
+/** 
+ * @typedef {object} PackageInfo
+ * A package info contains data from a `package.json` file. 
+ * @prop {string} [name] The name of the package
+ * @prop {string} [version] The package's version
+ * @prop {string} [type] Module type 
+ * @prop {string} [license] The license type
+ * @prop {PackageDependencies} [dependencies] Package's dependencies
+ * @prop {PackageDependencies} [devDependencies] Package's dev dependencies
+ * @prop {PackageDependencies} [optionalDependencies] Package's dev dependencies
+ * @prop {Record<string,Record<string,string>>} [providers] Provider listings
+ * 
+ * @typedef {Record<string,string>} PackageDependencies
+ * Dependencies for a {@link PackageInfo}
+ * 
+ * @typedef {Record<string,string>} PackageProviders
+ * A map of providers
+ * 
+ */
+
+
+
+/**
+ * Packages represent a local file system package package, a directory 
+ * containing a package.json file. A package has knowledge of its name, 
+ * version and other metadata gleened from the package.json file. 
+ * 
+ * A package references {@link Module Modules} which
+ * 
+ * @since 0.1.0
+ */
+class Package {
+
+  /**
+   * 
+   * @param  {string} dir The absolute path to the package directory
+   * @param  {Reflecter} reflecter The owning reflecter
+   */
+  constructor(dir, reflecter) {
+    if (!path.isAbsolute(dir))
+      throw new Error(`dir must be an absolute path: ${dir}`)
+    /** @type {Reflecter} */
+    this.reflecter = reflecter;
+    /** @type {string} */
+    this.dir = dir;
+    /** @type {string} */
+    this.name = path.basename(dir);
+    /** @type {string} */
+    const infopath = path.join(this.dir, 'package.json');
+    // console.log(`[reflecter] Package: loading package.json: ${infopath}`)
+    try {
+      /** @type {PackageInfo} */
+      this.info = require(infopath);
+      if (this.info.name)
+        this.name = this.info.name;
+      if (this.info.version)
+        this.version = this.info.version;
+    } catch (err) {
+      if (fs.existsSync(infopath))
+        console.log(`Failed to require: "${infopath}"`, err.stack ?? err)
+    }
+    /** @type {boolean} */
+    this.ignored = this.reflecter.ignoredPackages.includes(this.name);
+    /** @type {Record<string,Module>} */
+    this.modules = {};
+    /** @type {Record<string,Package>} */
+    this.dependencies = {};
+    /** @private
+     *  @type {fs.FSWatcher?} */
+    this.watcher = null
+  }
+
+  /**
+   * Assigns dependent packages
+   * @param  {Package} pack A package
+   * @return {Package}
+   */
+  dependency(pack) {
+    let dependency = this.dependencies[pack.name];
+    if (!dependency) {
+      dependency = this.dependencies[pack.name] = pack;
+    } else if (dependency !== pack) {
+      throw new Error("IMPL: multiple dependencies");
+    }
+
+    require.cache['']?.exports
+
+    return dependency;
+  }
+
+  /**
+   * Returns a module 
+   * 
+   * @param  {object} opts
+   * @param  {string} opts.file The file path
+   * @param  {any} [opts.exports] The file's exports
+   * @return {Module}
+   */
+  module({ file, exports }) {
+    if (!file.startsWith(this.dir)) {
+      throw new Error("IMPL: file, \"" + file + "\", is not in package directory, \"" + this.dir + "\"")
+    }
+    let subfile = file.substring(this.dir.length + 1);
+    let module = this.modules[subfile];
+    if (!module) {
+      module = this.modules[subfile] = new Module({ file, exports }, this);
+      this.reflecter.modules[file] = module;
+      if (!this.reflecter.pending) {
+        this.reflecter.emit('module', file, module);
+      }
+    }
+    return module;
+  }
+
+  /**
+   * Finds the module defining the given *type* in any loaded package. This 
+   * does an exhaustive search for possible files.
+   * @param {any} type
+   * @returns {Promise<Module[]>} The module for the type
+   */
+  async findModulesForType(type) {
+    
+    const found = [];
+
+    /* Do a file search for files ending in '.{js,mjs,cjs,ts}' except for ones 
+     * in '/node_modules/', load them, searching for the type. */
+    const files = findFiles(this.dir, {
+      exclude: this.reflecter.ignoredModules, // /\/node_modules\/|\.d\.ts$/,
+      include: /\.(js|mjs|cjs|ts)$/,
+      recursive: true
+    });
+
+    for await (const file of files) {
+      const module = this. module({ file })
+      if (module) {
+        if (!module.hasLoaded)
+          await module.reload();
+        console.log(`reflecter: find: loaded module ${module.file}: types ${Object.keys(module.types).join(', ')}`)
+        for (const name in module.types) {
+          if (module.types[name] === type) {
+            found.push(module);
+          }
+        }
+      }
+    }
+    return found;
+  }
+  
+  /**
+   * Returns a map of providers for this package
+   * @param  {string} name THe name of the provider
+   * @return {PackageProviders} A map of package providers
+   */
+  providers(name) {
+    if (!this.info) return {};
+    const types = this.info.providers;
+    if (!types) return {};
+    return types[name] || {};
+  }
+
+  /**
+   * Attaches the package and starts watching file changes within the package
+   */
+  attach() {
+    if (this.ignored)
+      return
+    if (this.watcher)
+      throw new Error("IMPL: already attached")
+    console.log("Reflecter attach: watching: " + this.dir);
+    const self = this;
+    this.watcher = fs.watch(this.dir, { recursive:true, persistent:false, encoding:'utf8' }, function (e, f) {
+      if (self.watcher !== this)
+        throw new Error("IMPL: watcher?");
+      self.fileChanged(e, f/*, this*/)
+    });
+    this.watcher.on('close', () => {
+      if (!this.reflecter.quiet) console.log("[reflecter] fileChanged: closed");
+    })
+    this.watcher.on('error', (error) => {
+      if (!this.reflecter.quiet) console.log("[reflecter] fileChanged: error", error);
+    })
+    if (!this.reflecter.pending)
+      this.reflecter.emit('watching', this.dir, this);
+  }
+
+  /**
+   * Detaches the package, closes watchers emits the 'unwatched' event
+   */
+  detach() {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+      if (!this.reflecter.pending)
+        this.reflecter.emit('unwatched', this.dir, this);
+    }
+  }
+
+  /**
+   * Observes that a file has changed
+   * @private
+   * @param  {string} event The file change event
+   * @param  {string|null} filename The filename
+   * @return {Promise<void>}
+   */
+  async fileChanged(event, filename) {
+    if (filename == null)
+      return;
+    try {
+      // console.log(new Date().toISOString() + ": fileChanged: event=" + event + ", file=" + filename);
+      const file = path.join(this.dir, filename);
+      const extname = path.extname(file);
+      let module = this.reflecter.module(file);
+
+      if (!module && moduleExts.includes(extname)) {
+        /* If we don't already have this module when file changed, either:
+         * 1. It hasn't been sync()'d yet (unlikely)
+         * 2. It is not a module and isn't in require.cache (commonjs)
+         * 3. It is an ES module and isn't in require.cache. 
+         * To check whether it is an ES module, import the file (cached). If
+         * it has a module definition, then 
+         */
+        try {
+          // @ts-ignore
+          const exports = await import(file);
+          console.log(`[reflecter] Module.fileChanged(): found exports`, exports)
+          module = this.module({ file, exports })
+          module.stats = null;
+        } catch (err) {
+          debugger;
+          console.log(`[reflecter] Module.fileChanged(): failed to import '${file}': ${err.stack}`)
+        }
+      }
+      switch (event) {
+        case 'change':
+          if (module)
+            await module.reload();
+          break;
+        case 'rename': // or delete
+          if (module)
+            module.renamed = true;
+          break;
+        default:
+          if (!this.reflecter.quiet) console.log("Unsupported change type");
+      }
+    } catch (error) {
+      if (!this.reflecter.quiet) console.log("Reflecter: IMPL error: ", error.stack);
+    }
+  }
+
+}
+// Reflecter.Package = Package;
+
+/**
+ * @typedef {'commonjs'|'module'} ModuleType
+ * The type of module
+ * 
+ * @typedef {Record<string,Class>} ModuleExportedTypes
+ * Exported types of a module
+ */
+
+/**
+ * A repreesentation of a file module within a {@link Package}
+ * 
+ * @since 1.0
+ */
+class Module {
+
+  /**
+   * Creates a module with the given *file* and module *exports* 
+   * @param  {{file: string, exports: any}} module The 
+   * @param  {Package} pack The package 
+   */
+  constructor({ file, exports }, pack) {
+    /** @type {Package} */
+    this.package = pack;
+    /** @type {string} */
+    this.file = file;
+    /** @type {string} */
+    this.basename = path.basename(this.file)
+    /** @type {boolean=} */
+    this.renamed
+    /** @type {any} */
+    this.exports = exports;
+    /** @type {ModuleType} */
+    this.type = require.cache[this.file] ? 'commonjs' : 'module';
+    /** @package
+     *  @type {fs.Stats?} */
+    this.stats = fs.statSync(this.file);
+    /** @type {number} */
+    this.version = 0;
+    
+    /** Exported types in this module 
+     * @type {Record<string,Class>} */
+    this.types = Module.exportedTypes(exports);
+    for (let key in this.types) {
+      const type = this.types[key]
+      /** @type {TypeReflect} */
+      const reflect = {module:this, package:this.package, version:0}
+      Object.defineProperty(type, symReflect, { 
+        value:reflect, 
+        enumerable:false, writable:false, configurable:true 
+      });
+    }
+
+    /** Generations of exported types
+     * @type {ModuleExportedTypes[]} */
+    this.generations = [];
+  }
+
+  toString() {
+    return `Module(${this.package.name}:${this.basename})`
+  }
+
+  get hasLoaded() {
+    return this.exports != null
+  }
+
+  /**
+   * Reloads this module and redefines symbols as needed, writing previous 
+   * definitions based on
+   */
+  async reload() {
+    /* To prevent from double-loading, check to see if mtime is too 
+     * short or if there are no types to load */
+    if (this.hasLoaded) {
+      const oldStat = this.stats;
+      this.stats = fs.statSync(this.file);
+      const age = this.stats.mtimeMs - (oldStat ? oldStat.mtimeMs : 0);
+      if (age == 0)
+        return;
+
+      /* Don't reload files that have no types defined. */
+      if (Object.keys(this.types).length == 0) {
+        if (!this.package.reflecter.quiet) console.log(`Reflecter: package '${this.package.name}' not reloading, no types in module '${this.file}'`);
+        return;
+      }
+      // console.log(`  - ${this.stats.mtimeMs - oldStat.mtimeMs}ms ago`);
+
+      /* Record the previous generation */
+      this.generations.push(this.types);
+    }
+
+
+    /* Reload the module and capture the new types */
+    // retry: for (let ttl = 3; ttl >= 0; ttl--) {
+      try {
+        switch (this.type) {
+          case 'commonjs':
+            delete(require.cache[this.file]);
+            // @ts-ignore
+            this.exports = await import(this.file)
+            this.module = require.cache[this.file]
+            break;
+          case 'module':
+            if (!this.hasLoaded) {
+              /* The first time, load symbols as they are */
+              this.exports = await import(this.file)
+
+              /* Reload immediately after, since this first round will capture 
+               * the initial symbols from the path, the setImmediate() reload 
+               * will capture changes */
+              setImmediate(() => {
+                this.reload()
+              })
+
+              /* Load again to refresh */
+              // const id = this.stats?.mtimeMs;
+              // this.exports = await import(this.file + `?${id}`)
+
+            } else {
+              /* After that, load new symbols */
+              const id = this.stats?.mtimeMs;
+              this.exports = await import(this.file + `?${id}`)
+            }
+            break;
+        }
+      } catch (err) {
+        switch (err.code) {
+          case 'ERR_UNKNOWN_FILE_EXTENSION':
+            this.exports = this.recompile();
+            break;
+            // if (path.extname(this.file) == '.ts') {
+            //   try {
+            //     /* Ensure that ts-node/register is here to compile .ts */
+            //     this.require || (this.require = createRequire(this.file));
+            //     const tsnode = this.require('ts-node');
+            //     tsnode.register();
+            //     break;
+            //   } catch (err) {
+            //     console.log(`Reflecter: failed to load file with Typescript: ${this.file}: ${err.stack}`)
+            //     break retry;
+            //   }
+            // }
+            /* fall through */
+          default:
+            console.log(`Reflecter: failed to load file: ${this.file}: ${err.stack}`)
+            return;
+            // break retry;
+        }
+      }
+    // }
+// delete(require.cache[this.file]);
+    // const exports = await import(this.file);
+    // this.module = require.cache[this.file];
+    const newTypes = this.types = Module.exportedTypes(this.exports);
+
+    for (let key in this.types) {
+      /** @type {TypeReflect} */
+      const reflect = {module:this, package:this.package, version:0}
+      Object.defineProperty(this.types[key], symReflect, { value:reflect, enumerable:false, writable:false, configurable:true });
+    }
+
+    /* Each previous generation needs to be rewritten to be identical to the 
+     * new one, since each of them could have been instantiated */
+    for (let oldTypes of this.generations) {
+      for (let exportKey in oldTypes) {
+        let oldType = oldTypes[exportKey], newType = newTypes[exportKey];
+        if (!newType) continue;
+        // console.log(`Module(${this.file}): Annotate ${newType.name} type`);
+        
+        if (newType[symReflect] == null)
+          throw new Error(`[reflecter] no existing reflect metadata for newType: ${newType}`)
+        /* Version bump, annotate previous vesrions? */
+        newType[symReflect].version = oldType[symReflect].version + 1;
+
+        const oldTypeProps = Object.getOwnPropertyDescriptors(oldType);
+        const newTypeProps = Object.getOwnPropertyDescriptors(newType);
+        for (let key in newTypeProps) {
+          if (reserved.includes(key)) continue;
+          let oldProp = oldTypeProps[key], newProp = newTypeProps[key];
+          if (oldProp && !oldProp.configurable) continue;
+          // console.log(`  + ${newType.name}.${key}`);
+          Object.defineProperty(oldType, key, newProp);
+        }
+
+        /* Convert all of the prototype methods to call the new one */
+        const oldProto = oldType.prototype, newProto = newType.prototype;
+        const oldProtoProps = Object.getOwnPropertyDescriptors(oldProto);
+        const newProtoProps = Object.getOwnPropertyDescriptors(newProto);
+        for (let key in newProtoProps) {
+          if (reserved.includes(key)) continue;
+          let oldProp = oldProtoProps[key], newProp = newProtoProps[key];
+          let oldPropType = _typeof(oldProp), newPropType = _typeof(newProp);
+          if (oldProp && !oldProp.configurable) continue;
+          // console.log(`  - ${newType.name}.${key}`);
+          Object.defineProperty(oldProto, key, newProp);
+
+          // if (oldPropType === 'function' && newPropType === 'function') {
+          //   /* */
+          //   console.log(`  - ${newType.name}.${key}()...`);
+          //   // const desc = Object.getOwnPropertyDescriptor(oldProto, key);
+          //   // console.log(`    old: `, desc);
+          //   oldProto[key] = newProp;
+          //   // const desc2 = Object.getOwnPropertyDescriptor(oldProto, key);
+          //   // console.log(`    new: `, desc2);
+
+          //   console.log(`    Reflecter.sync? `);
+
+          // }
+        }
+
+      }
+    }
+    const entries = Object.entries(this.types);
+    if (entries.length > 0) {
+      this.version++;
+      // [['default', Reflecter], ['default.Package', Package], ['default.Module', Module]]
+      // Reflecter@1, { Package@1, Module@1} 
+      if (!this.package.reflecter.quiet) {
+        const defs = entries.map(([key, def]) => {
+          let name = key.replace(/^default\.?/, ''), impl = def.name ?? '?';
+          return (!name ? impl : name == impl ? impl : name+':'+impl) + '@' + def[symReflect].version
+        }).join(', ')
+        console.log(`Reflecter: package '${this.package.name}' reloaded module '${this.file}' (${defs})`);
+      }
+      if (!this.package.reflecter.pending) 
+        this.package.reflecter.emit('reloaded', this.file, this);
+    }
+  }
+
+  /**
+   * Compiles the module.  
+   * @return {any} The exports from the compiled file
+   */
+  recompile() {
+    const extname = path.extname(this.file)
+    switch (extname) {
+      case '.ts':
+        /* For TypeScript modules, recompile using ts-node */
+        if (this.compiler == null) {
+          this.require || (this.require = module_.createRequire(this.file))
+          this.tsnode = this.require('ts-node')
+          this.compiler = this.tsnode.create({})
+        }
+        const tsCode = fs.readFileSync(this.file, 'utf8')
+        const jsCode = this.compiler.compile(tsCode, this.file)
+        // @ts-ignore
+        const paths = module_._nodeModulePaths(path.dirname(this.file));
+        // @ts-ignore
+        const mod = new module_(this.file, module.parent /* ours */)
+        mod.filename = this.file;
+        mod.paths = paths;
+        // @ts-ignore
+        mod._compile(jsCode, this.file);
+        return mod.exports;
+        
+      default:
+        throw new Error(`Reflecter: recompiling ${extname} files not supported: ${this.file}`)
+    }
+  }
+
+  /**
+   * Returns map of exported types by depth key.
+   * @param  {any} exports The module exports
+   * @return {Record<string,Class>} Exported types map
+   */
+  static exportedTypes(exports) {
+    /** @type {Record<string,Class>} */
+    const types = {};
+    /** @typedef {Array.<any>} QueueEntry */
+    /** @type {QueueEntry[]} */
+    const queue = [['', exports, null]]
+    /** @type {Map<any,boolean>} */
+    const seen = new Map()
+    /* @typedef {[string, any, any]} QueueEntry */
+    for (let /** @type {QueueEntry=} */entry; entry = queue.shift(); ) {
+      let [keyPath, symbol, parent] = entry;
+      if (seen.has(symbol)) continue;
+      seen.set(symbol, true);
+      const symbolType = _typeof(symbol);
+      switch (symbolType) {
+        case 'class':
+          /** @type {Class} */
+          const asClass = symbol
+          types[keyPath] = asClass
+          // fall through
+        case 'object':
+          /** @type {Object} */
+          const asObject = symbol
+
+          const keys = Object.keys(asObject);
+          for (let i = 0, ic = keys.length, key; key = keys[i]; i++) {
+          // for (let key in asObject) {
+            const sym = asObject[key], subtype = _typeof(sym);
+            if (subtype !== 'class')
+              continue;
+            if (symbolType == 'class' && !_namedLikeClass(sym.name || key))
+              continue;
+            // if (/*subtype == 'object' ||*/ subtype == 'class')
+            const keyKeyPath = keyPath ? keyPath+'.'+key : key
+            queue.push([keyKeyPath, sym, asObject])
+          }
+          break;
+      }
+    }
+    return types;
+  }
+
+}
+Reflecter.Module = Module;
+
+Reflecter.symReflect = symReflect
+
+module.exports = {
+  Reflecter,
+  Package,
+  Module,
+  symReflect,
+}
+
+const reserved = ['constructor', 'prototype', 'length', 'arguments'];
+const moduleExts = ['.js', '.mjs']
+
+/**
+ * Returns the *value* type
+ * @param  {any} value The value
+ * @return {string} Type of value 
+ * @ignore
+ */
+function _typeof(value) {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  let type = typeof(value), ctor, name;
+  if (type === 'object') {
+    if (Array.isArray(value)) return 'array';
+    if ((ctor = value.constructor) && (name = ctor.name))
+      return name.toLowerCase();
+  } else if (type === 'function') {
+    if (!value.hasOwnProperty('arguments') && value.hasOwnProperty('prototype'))
+      return 'class';
+  }
+  return type;
+}
+
+/**
+ * Returns `true` if the *name* conforms to class name conventions
+ * @param  {string?} name The name
+ * @return {boolean} `true` if the *name* appears to be a class name
+ * @ignore
+ */
+function _namedLikeClass(name) {
+  return name?.match(/^[A-Z]\w+$/) ? true : false
+}
+
+/**
+ * Finds files in a directory, yielding them as they are found. 
+ * @param {string} dir 
+ * @param {object} opts 
+ * @param {RegExp} [opts.exclude]
+ * @param {RegExp} [opts.include]
+ * @param {boolean} [opts.recursive=true]
+ */
+async function *findFiles(dir, opts) {
+  // no recursion
+
+  for (const queue = [dir]; queue.length; ) {
+    const dir = queue.shift();
+    if (dir == null)
+      continue;
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (opts.recursive !== false)
+          queue.push(file);
+        continue
+      } 
+      if (opts.include && !opts.include.test(file))
+        continue
+      if (opts.exclude && opts.exclude.test(file))
+        continue
+      yield file;
+    }
+  }
+
+}

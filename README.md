@@ -1,6 +1,6 @@
 # reflecter
 
-The reflector supports reflection utilities for node.js with no- to little 
+The reflecter supports reflection utilities for node.js with no- to little 
 impact on runtime performance. It support a short list of features:
 
 - Works in node.js 
@@ -35,13 +35,13 @@ Reflector only needs to be required
 let myItem = new MyClass();
 
 // Find information about this item, from package.json
-const pack = myItem.constructor.$runtime.package;
+const pack = myItem.constructor.$reflecter.package;
 pack.name;        // name from package.json
 pack.version;     // version from package.json
 pack.modules;     // all loaded files from package
 
 // Find information about the class
-const module = this.constructor.$runtime.module;
+const module = this.constructor.$reflecter.module;
 module.file;      // file name that defines this class
 module.package;   // package for module
 module.reload();  // reloads file if changed
@@ -56,22 +56,22 @@ path whether Javascript or transpiled language (Typescript) an reloads the
 source without restarting the server and affecting application state.
 
 ```js
-const runtime = require('reflecter');
+const reflecter = require('reflecter');
 // Reloading is now live for current and future source file edits if 
 // environment variable is set:
 // export RELOAD_ENABLED=
 
-runtime.isReloadEnabled           // -> true if RELOAD_ENABLED env variable set
-runtime.setReloadEnabled(false);  // Halts source loading
-runtime.setReloadEnabled(true);   // (Re)starts source loading
+reflecter.isReloadEnabled           // -> true if RELOAD_ENABLED env variable set
+reflecter.setReloadEnabled(false);  // Halts source loading
+reflecter.setReloadEnabled(true);   // (Re)starts source loading
 ```
 
 - No need to restart server to reload source
 - Redefines exported symbols and ES6 classes
 - Existing instances of classes adopt new methods and properties
-- Reflector tracks version number in `MyClass.$runtime.version`
+- Reflector tracks version number in `MyClass.$reflecter.version`
 - Enable using `RELOAD_ENABLED` environment variable 
-- Enable programmatically using `runtime.setReloadEnabled(true)`
+- Enable programmatically using `reflecter.setReloadEnabled(true)`
 
 ### Usage Scenarios
 
@@ -87,7 +87,7 @@ runtime.setReloadEnabled(true);   // (Re)starts source loading
 
 ### How does it work?
 
-Reflector's runtime watches all file changes in top-level source directories (ones not inside a `node_modules` directory). Any time a loaded source file is modified, Reflecter walks through `module.exports` looking for redefinable symbols, primarily classes, exports of classes, then copies all property definitions, both static and prototype, from the new definiton into all previous definitions of the class/symbol. This is so that all instances created on prior definitions get to take advantage of the updated implementation, along with accurate debugging line numbers.
+Reflector's reflecter watches all file changes in top-level source directories (ones not inside a `node_modules` directory). Any time a loaded source file is modified, Reflecter walks through `module.exports` looking for redefinable symbols, primarily classes, exports of classes, then copies all property definitions, both static and prototype, from the new definiton into all previous definitions of the class/symbol. This is so that all instances created on prior definitions get to take advantage of the updated implementation, along with accurate debugging line numbers.
 
 If there's a probem when the file is reloaded, such as syntax error, it happens! The existing loaded symbols are left intact.
 
@@ -106,23 +106,23 @@ If there's a probem when the file is reloaded, such as syntax error, it happens!
 
 -----
 
-## <a name="Runtime"></a>Runtime Class
+## <a name="Reflecter"></a>Reflecter Class
 
 ```js
-const runtime = require('reflecter');
-runtime.packages; // all loaded packages
+const reflecter = require('reflecter');
+reflecter.packages; // all loaded packages
 ```
 
 ### Properties
 
-- **packages** (Object<string,[Package](#Package)>) 
+- **packages** (Record<string,[Package](#Package)>) 
 
   Current set of packages with at least one module loaded. The package 
   provides information sucn as all loaded modules within the package
   and information inside the `package.json` file. See the 
   [Package](#Package) 
 
-- **modules** (Object<string,[Module](#Module)>)
+- **modules** (Record<string,[Module](#Module)>)
 
   All loaded modules. [Modules](#Module) provide access to the 
   [Package](#Package) it is contained within as well as exported type 
@@ -130,9 +130,9 @@ runtime.packages; // all loaded packages
 
 - **main** ([Module](#Module))
 
-  The main module or program entry. To find the main package use `runtime.main.package`
+  The main module or program entry. To find the main package use `reflecter.main.package`
 
-- **locals** (Object<string,[Package](#Package)>)
+- **locals** (Record<string,[Package](#Package)>)
 
   Local packages, i.e. packages not loaded through `node_modules`
 
@@ -142,9 +142,9 @@ runtime.packages; // all loaded packages
 
 ### Methods
 
-- *runtime*.**package**(*abspath*)  
-  *runtime*.**package**(*class*)  
-  *runtime*.**package**(*object*)
+- *reflecter*.**package**(*abspath*)  
+  *reflecter*.**package**(*class*)  
+  *reflecter*.**package**(*object*)
   - *path* (string) – the directory for the package
     *class* (class) – A class, or  
     *object* (object) – An instance of a class
@@ -152,9 +152,9 @@ runtime.packages; // all loaded packages
 
   This overloaded method returns the [Package](#Package) for the directory or the packagke that defines the class or object's constructor. 
 
-- *runtime*.**module**(*abspath*)  
-  *runtime*.**module**(*class*)  
-  *runtime*.**module**(*object*)
+- *reflecter*.**module**(*abspath*)  
+  *reflecter*.**module**(*class*)  
+  *reflecter*.**module**(*object*)
   - *path* (string) – the directory for the module
     *class* (class) – A class, or  
     *object* (object) – An instance of a class
@@ -202,8 +202,8 @@ runtime.packages; // all loaded packages
 
 ```js
 // ./index.js
-const runtime = require('reflecter');
-const pack = runtime.package(__dirname) ;
+const reflecter = require('reflecter');
+const pack = reflecter.package(__dirname) ;
 pack.modules; // -> all loaded modules/source files
 ```
 
@@ -224,14 +224,14 @@ Represents a package or any local directory with a `package.json`.
   The contents of the `package.json` for the package or `null` if 
   there's no `package.json` listed in the *dir*.
 
-- **modules** (Object<string,[Module](#Module)>)
+- **modules** (Record<string,[Module](#Module)>)
 
   Loaded modules in the package including keyed by the relative file path 
   such as 'lib/file.js'. See the [Module](#Module)
 
-- **dependencies** (Object<string,[Package](#Package)>)
+- **dependencies** (Record<string,[Package](#Package)>)
 
-  A map of package dependences as loaded at runtime, as distinct from 
+  A map of package dependences as loaded at reflecter, as distinct from 
   what's listed in `package.json`. 
 
 -----
@@ -244,15 +244,15 @@ class MyClass {
 
   // Get the version from package.json
   packageVersion() {
-    const metadata = this.constructor.$runtime;
+    const metadata = this.constructor.$reflecter;
     return metadata.package.info.version;
   }
 
 }
 
 // Get information about a class
-const runtime = require('reflector');
-const module = runtime.module(MyClass);
+const reflecter = require('reflector');
+const module = reflecter.module(MyClass);
 module.file; // file name of the class
 module.reload(); // reload if changed
 
@@ -276,13 +276,13 @@ Represents a loaded source file
 
 - **version** (number)
 
-  The runtime version of this module, incremented every time this module
+  The reflecter version of this module, incremented every time this module
   is reloaded and has symbols to redefine
 
 - **types** (Object<string,function|class>)
 
   A flatten list of reloadable exported symbols in the module. This is
-  the list of symbols defined by the runtime. 
+  the list of symbols defined by the reflecter. 
 
 ### Methods
 

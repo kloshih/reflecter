@@ -4,16 +4,30 @@
  * Copyright (c) 2021-present Lo Shih
  */
 
-const Runtime = require("./runtime");
+const { 
+    Reflecter,
+    Package,
+    Module,
+    symReflect,
+} = require("./reflecter");
 
-/* Using a global runtime allows us to detach from multiple loading versions of 
- * the runtime. This is the best way to go for singletons, since class 
- * definition is fluid. */
-const kRuntime = Symbol('kRuntime');
-const runtime = global[kRuntime] || (global[kRuntime] = new Runtime());
+/* Using a global reflecter allows us to detach from multiple loading 
+ * versions of the reflecter. This is the best way to go for singletons, 
+ * since class definition is fluid. */
+// const kReflecter = Symbol('kReflecter');
+// const symReflect = Reflecter.symReflect
+const reflecter = global[symReflect] ||= new Reflecter();
 
-runtime.Runtime = Runtime;
-module.exports = { 
-  default: runtime,
-  runtime,
+reflecter.Reflecter = Reflecter;
+
+module.exports = {
+    reflecter,
+    Reflecter,
+    Package,
+    Module,
+    symReflect,
 }
+// { 
+//   default: reflecter,
+//   reflecter,
+// }

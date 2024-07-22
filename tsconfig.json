@@ -1,0 +1,27 @@
+{
+    "compilerOptions": {
+      "target": "es2022",
+      "module": "Node16",
+      "esModuleInterop": true,
+      "moduleResolution": "node16",
+      "strictNullChecks": true,
+      "checkJs": true,
+      "allowJs": true,
+      "declaration": true,
+      "emitDeclarationOnly": true,
+      "outDir": "types",
+      "declarationMap": true,
+    },
+    "include": [
+      "src/**/*.js",
+      // "test/**/*.js"    
+    ],
+    "exclude": [
+      "dist",
+      // "node_modules",
+      // "test",
+      "types",
+      "docs"
+    ]
+  }
+  

@@ -12,7 +12,7 @@ export default class Subject extends EventEmitter {
   }
 
   async calc() {
-    const factor = 2; // @editme
+    const factor = 4; // @editme
     this.emit('calc', { name:this.name, factor, count:this.count++ })
     if (this.count >= this.limit)
       await this.stop()

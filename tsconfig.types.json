@@ -1,0 +1,22 @@
+{
+  "include": [
+    "index.js",
+    "src/**/*.js",
+  ],
+  "exclude": [
+    "node_modules",
+    "**.spec.js",
+    "**.test.js"
+  ],
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "node",
+    "allowJs": true,
+    "checkJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "types",
+    "declarationMap": true,
+  }
+}

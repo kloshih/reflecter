@@ -58,3 +58,8 @@ typings/
 .env
 
 .vscode
+.markdown.css
+_obsolete
+_obsolete
+types
+*~

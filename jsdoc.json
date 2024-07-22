@@ -1,0 +1,23 @@
+{
+  "source": {
+    "include": [".", "README.md"],
+    "exclude": ["node_modules"]
+  },
+  "plugins": ["plugins/markdown", "node_modules/jsdoc-typeof-plugin"],
+  "templates": {
+    "default": {
+      "outputSourceFiles": true
+    }
+  },
+  "opts": {
+    "encoding": "utf8",
+    "readme": "./README.md",
+    "destination": "docs/",
+    "recurse": true,
+    "verbose": true,
+    "theme_opts": {
+      "theme": "postman"
+    },
+    "json": true
+  }
+}

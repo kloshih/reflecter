@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Home</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Home</h1>
+
+    
+
+
+
+    
+
+
+    <h3> </h3>
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+    <section>
+        <article><h1>reflecter</h1>
+<p>The reflecter supports reflection utilities for node.js with no- to little
+impact on runtime performance. It support a short list of features:</p>
+<ul>
+<li>Works in node.js</li>
+<li>Creates metadata at runtime:
+<ul>
+<li><strong>Loaded Modules</strong> - all files that have been required with <code>require()</code></li>
+<li><strong>Loaded Packages</strong> - all top-level packges with <code>package.json</code> and loaded packges one-level deep</li>
+<li>For exported class, associates the module and package that loaded it for introspection</li>
+</ul>
+</li>
+<li>Live source reloading</li>
+</ul>
+<h2>Installation</h2>
+<pre class="prettyprint source"><code>npm install --save reflecter
+</code></pre>
+<h2>Usage</h2>
+<pre class="prettyprint source lang-js"><code>// To enable, set the RELOAD_ENABLED environment variable
+// export RELOAD_ENABLED=
+
+require('reflecter');
+</code></pre>
+<p>Reflector only needs to be required</p>
+<hr>
+<pre class="prettyprint source lang-js"><code>// const MyClass = require('./mymodule');
+let myItem = new MyClass();
+
+// Find information about this item, from package.json
+const pack = myItem.constructor.$reflecter.package;
+pack.name;        // name from package.json
+pack.version;     // version from package.json
+pack.modules;     // all loaded files from package
+
+// Find information about the class
+const module = this.constructor.$reflecter.module;
+module.file;      // file name that defines this class
+module.package;   // package for module
+module.reload();  // reloads file if changed
+
+</code></pre>
+<h2>Live Source Reloading</h2>
+<p>Reflecter supports live reloading of source files into the runtime upon file
+save. It uses <code>fs.watch()</code> to observe when source files change in the load
+path whether Javascript or transpiled language (Typescript) an reloads the
+source without restarting the server and affecting application state.</p>
+<pre class="prettyprint source lang-js"><code>const reflecter = require('reflecter');
+// Reloading is now live for current and future source file edits if 
+// environment variable is set:
+// export RELOAD_ENABLED=
+
+reflecter.isReloadEnabled           // -> true if RELOAD_ENABLED env variable set
+reflecter.setReloadEnabled(false);  // Halts source loading
+reflecter.setReloadEnabled(true);   // (Re)starts source loading
+</code></pre>
+<ul>
+<li>No need to restart server to reload source</li>
+<li>Redefines exported symbols and ES6 classes</li>
+<li>Existing instances of classes adopt new methods and properties</li>
+<li>Reflector tracks version number in <code>MyClass.$reflecter.version</code></li>
+<li>Enable using <code>RELOAD_ENABLED</code> environment variable</li>
+<li>Enable programmatically using <code>reflecter.setReloadEnabled(true)</code></li>
+</ul>
+<h3>Usage Scenarios</h3>
+<ul>
+<li><strong>Speed development</strong><br>
+Modify running servers and applications without restarts.</li>
+<li><strong>Change source without debugger restart</strong><br>
+Stay in the debugger longer. Reflecter plays well with debuggers,
+allowing you to edit and save changes to source while debugging.</li>
+<li><strong>Make changes in long running node servers</strong><br>
+Without restarting, reduce restarts and downtime. Apply emergency
+patches.</li>
+</ul>
+<h3>How does it work?</h3>
+<p>Reflector's reflecter watches all file changes in top-level source directories (ones not inside a <code>node_modules</code> directory). Any time a loaded source file is modified, Reflecter walks through <code>module.exports</code> looking for redefinable symbols, primarily classes, exports of classes, then copies all property definitions, both static and prototype, from the new definiton into all previous definitions of the class/symbol. This is so that all instances created on prior definitions get to take advantage of the updated implementation, along with accurate debugging line numbers.</p>
+<p>If there's a probem when the file is reloaded, such as syntax error, it happens! The existing loaded symbols are left intact.</p>
+<h3>Caveats</h3>
+<ul>
+<li>
+<p>Hard bindings to event handlers or timers won't use the new implementation since the binding is at bind() time not call time</p>
+<ul>
+<li>
+<p>Instead of<br>
+<code>stream.on('data', this.readData.bind(this));</code> write:<br>
+<code>stream.on('data', data =&gt; this.readData(data));</code></p>
+</li>
+<li>
+<p>Instead of<br>
+<code>setInterval(this.reload.bind(this), 10e3);</code> write<br>
+<code>setInterval(() =&gt; this.reload(), 10e3);</code></p>
+</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h2><a name="Reflecter"></a>Reflecter Class</h2>
+<pre class="prettyprint source lang-js"><code>const reflecter = require('reflecter');
+reflecter.packages; // all loaded packages
+</code></pre>
+<h3>Properties</h3>
+<ul>
+<li>
+<p><strong>packages</strong> (Record&lt;string,<a href="#Package">Package</a>&gt;)</p>
+<p>Current set of packages with at least one module loaded. The package
+provides information sucn as all loaded modules within the package
+and information inside the <code>package.json</code> file. See the
+<a href="#Package">Package</a></p>
+</li>
+<li>
+<p><strong>modules</strong> (Record&lt;string,<a href="#Module">Module</a>&gt;)</p>
+<p>All loaded modules. <a href="#Module">Modules</a> provide access to the
+<a href="#Package">Package</a> it is contained within as well as exported type
+information.</p>
+</li>
+<li>
+<p><strong>main</strong> (<a href="#Module">Module</a>)</p>
+<p>The main module or program entry. To find the main package use <code>reflecter.main.package</code></p>
+</li>
+<li>
+<p><strong>locals</strong> (Record&lt;string,<a href="#Package">Package</a>&gt;)</p>
+<p>Local packages, i.e. packages not loaded through <code>node_modules</code></p>
+</li>
+<li>
+<p><strong>isReloadEnabled</strong> (boolean) &amp; <strong>setReloadEnabled()</strong></p>
+<p>Whether the source reloader is enabled</p>
+</li>
+</ul>
+<h3>Methods</h3>
+<ul>
+<li>
+<p><em>reflecter</em>.<strong>package</strong>(<em>abspath</em>)<br>
+<em>reflecter</em>.<strong>package</strong>(<em>class</em>)<br>
+<em>reflecter</em>.<strong>package</strong>(<em>object</em>)</p>
+<ul>
+<li><em>path</em> (string) – the directory for the package
+<em>class</em> (class) – A class, or<br>
+<em>object</em> (object) – An instance of a class</li>
+<li><em>returns (<a href="#Package">Package</a>)</em></li>
+</ul>
+<p>This overloaded method returns the <a href="#Package">Package</a> for the directory or the packagke that defines the class or object's constructor.</p>
+</li>
+<li>
+<p><em>reflecter</em>.<strong>module</strong>(<em>abspath</em>)<br>
+<em>reflecter</em>.<strong>module</strong>(<em>class</em>)<br>
+<em>reflecter</em>.<strong>module</strong>(<em>object</em>)</p>
+<ul>
+<li><em>path</em> (string) – the directory for the module
+<em>class</em> (class) – A class, or<br>
+<em>object</em> (object) – An instance of a class</li>
+<li><em>returns (<a href="#Module">Module</a>)</em></li>
+</ul>
+<p>Returns the <a href="#Module">Module</a> for the file, class or object.</p>
+</li>
+</ul>
+<h3>Events</h3>
+<ul>
+<li>
+<p><strong>reloaded</strong>(<em>path</em>, <em>module</em>)</p>
+<ul>
+<li><em>path</em> (string) – the file path of the file</li>
+<li><em>module</em> (<a href="#Module">Module</a>) - the reloaded module definition</li>
+</ul>
+<p>Emitted when a source file at the given <em>path</em> has been reloaded.</p>
+</li>
+<li>
+<p><strong>package</strong>(<em>path</em>, <em>package</em>)</p>
+<ul>
+<li><em>path</em> (string) – the directory path of the package</li>
+<li><em>package</em> (<a href="#Package">Package</a>) – package definition loaded</li>
+</ul>
+<p>Emitted when a new package is loaded.</p>
+</li>
+<li>
+<p><strong>module</strong>(<em>path</em>, <em>module</em>)</p>
+<ul>
+<li><em>path</em> (string) – the file path of the loaded module</li>
+<li><em>module</em> (<a href="#Module">Module</a>) - the loaded module definition</li>
+</ul>
+<p>Emitted when a new module is loaded.</p>
+</li>
+<li>
+<p><strong>watching</strong>(<em>dir</em>, <em>package</em>)</p>
+<ul>
+<li><em>dir</em> (string) – the director being watched</li>
+<li><em>package</em> (<a href="#Package">Package</a>) - the watching package</li>
+</ul>
+<p>Emitted when a package is being watched</p>
+</li>
+<li>
+<p><strong>unwatched</strong>(<em>dir</em>, <em>package</em>)</p>
+<ul>
+<li><em>dir</em> (string) – the director being watched</li>
+<li><em>package</em> (<a href="#Package">Package</a>) - the watching package</li>
+</ul>
+<p>Emitted when a package is no longer being watched</p>
+</li>
+</ul>
+<hr>
+<h2><a name="Package"></a>Package class</h2>
+<pre class="prettyprint source lang-js"><code>// ./index.js
+const reflecter = require('reflecter');
+const pack = reflecter.package(__dirname) ;
+pack.modules; // -> all loaded modules/source files
+</code></pre>
+<p>Represents a package or any local directory with a <code>package.json</code>.</p>
+<h3>Properties</h3>
+<ul>
+<li>
+<p><strong>name</strong> (string)</p>
+<p>The basename of the package, such as <code>&quot;reflecter&quot;</code>.</p>
+</li>
+<li>
+<p><strong>dir</strong> (string)</p>
+<p>The absolute path of the direcory package.</p>
+</li>
+<li>
+<p><strong>info</strong> (object)</p>
+<p>The contents of the <code>package.json</code> for the package or <code>null</code> if
+there's no <code>package.json</code> listed in the <em>dir</em>.</p>
+</li>
+<li>
+<p><strong>modules</strong> (Record&lt;string,<a href="#Module">Module</a>&gt;)</p>
+<p>Loaded modules in the package including keyed by the relative file path
+such as 'lib/file.js'. See the <a href="#Module">Module</a></p>
+</li>
+<li>
+<p><strong>dependencies</strong> (Record&lt;string,<a href="#Package">Package</a>&gt;)</p>
+<p>A map of package dependences as loaded at reflecter, as distinct from
+what's listed in <code>package.json</code>.</p>
+</li>
+</ul>
+<hr>
+<h2><a name="Module"></a>Module class</h2>
+<pre class="prettyprint source lang-js"><code>// ./my-class.js
+class MyClass {
+
+  // Get the version from package.json
+  packageVersion() {
+    const metadata = this.constructor.$reflecter;
+    return metadata.package.info.version;
+  }
+
+}
+
+// Get information about a class
+const reflecter = require('reflector');
+const module = reflecter.module(MyClass);
+module.file; // file name of the class
+module.reload(); // reload if changed
+
+</code></pre>
+<p>Represents a loaded source file</p>
+<h3>Properties</h3>
+<ul>
+<li>
+<p><strong>file</strong> (string)</p>
+<p>The absolute path of the source file</p>
+</li>
+<li>
+<p><strong>stat</strong> (fs.Stat)</p>
+<p>The latest stat for the filea</p>
+</li>
+<li>
+<p><strong>package</strong> (<a href="#Package">Package</a>)</p>
+<p>The package in which this module is contained. See <a href="#Package">Package</a></p>
+</li>
+<li>
+<p><strong>version</strong> (number)</p>
+<p>The reflecter version of this module, incremented every time this module
+is reloaded and has symbols to redefine</p>
+</li>
+<li>
+<p><strong>types</strong> (Object&lt;string,function|class&gt;)</p>
+<p>A flatten list of reloadable exported symbols in the module. This is
+the list of symbols defined by the reflecter.</p>
+</li>
+</ul>
+<h3>Methods</h3>
+<ul>
+<li>
+<p><em>module</em>.<strong>reload()</strong></p>
+<p>Reloads the module programmically. If the file has not changed since
+the last reload, this method does nothing.</p>
+</li>
+</ul></article>
+    </section>
+
+
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Analyzer.html">Analyzer</a></li><li><a href="Module.html">Module</a></li><li><a href="Package.html">Package</a></li><li><a href="Reflecter.html">Reflecter</a></li></ul><h3>Global</h3><ul><li><a href="global.html#analyzeCode">analyzeCode</a></li><li><a href="global.html#findFiles">findFiles</a></li><li><a href="global.html#name">name</a></li><li><a href="global.html#symReflect">symReflect</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 3.6.10</a> on Wed Jul 05 2023 06:55:14 GMT-0500 (Central Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
