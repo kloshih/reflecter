@@ -16,9 +16,28 @@ const {
  * since class definition is fluid. */
 // const kReflecter = Symbol('kReflecter');
 // const symReflect = Reflecter.symReflect
-const reflecter = global[symReflect] ||= new Reflecter();
+// const reflecterGlobal = global[symReflect] ||= new Reflecter();
 
-reflecter.Reflecter = Reflecter;
+
+/** 
+ * @type {Reflecter & {
+ *   Reflecter: typeof Reflecter,
+ *   Package: typeof Package,
+ *   Module: typeof Module,
+ *   symReflect: typeof symReflect,
+ * }} 
+ */
+export const reflecter = Object.assign(
+    global[symReflect] ||= new Reflecter(),
+    {
+        Reflecter,
+        Package,
+        Module,
+        symReflect,
+    }
+)
+
+// reflecterGlobal.Reflecter = Reflecter;
 
 module.exports = {
     reflecter,
